@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* Primary Colors */
+  --kudu-brown: #8B4513;
+  --kudu-brown-light: #A0522D;
+  --kudu-brown-dark: #654321;
+  
+  --savanna-gold: #DAA520;
+  --savanna-gold-light: #F4D03F;
+  --savanna-gold-dark: #B8860B;
+  
+  /* Secondary Colors */
+  --acacia-green: #228B22;
+  --acacia-green-light: #32CD32;
+  --acacia-green-dark: #006400;
+  
+  --sunset-orange: #FF8C00;
+  --sunset-orange-light: #FFA500;
+  --sunset-orange-dark: #FF7F00;
+  
+  --sky-blue: #87CEEB;
+  --sky-blue-light: #B0E0E6;
+  --sky-blue-dark: #4682B4;
+  
+  /* Neutral Colors */
+  --kalahari-sand: #F5F5DC;
+  --kalahari-sand-light: #FAFAFA;
+  --kalahari-sand-dark: #E6E6E6;
+  
+  --charcoal: #36454F;
+  --charcoal-light: #708090;
+  --charcoal-dark: #2F4F4F;
+}
+
+body {
+  font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+  background-color: var(--kalahari-sand-light);
+  color: var(--charcoal);
+  line-height: 1.6;
+}
