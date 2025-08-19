@@ -1,3 +1,6 @@
-.env
 node_modules
+scripts
+.env
 .lambda-env.json
+.apigw_api_id
+.apigw_integration_id
