@@ -5,6 +5,15 @@ import { MerchantCategoryList } from '../constants/merchantCategories'
 import type { MerchantCategory } from '../constants/merchantCategories'
 import { toCents, formatZAR } from '../utils/currency'
 
+// Canonicalize category label to match MerchantCategoryList (case-insensitive)
+function normalizeCategoryLabel(input?: string | null): string | undefined {
+  if (!input) return undefined
+  const lc = String(input).toLowerCase()
+  const all = Object.values(MerchantCategoryList) as string[]
+  const match = all.find(c => c.toLowerCase() === lc)
+  return match
+}
+
 const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL)
   ? (import.meta as any).env.VITE_API_URL
   : (typeof window !== 'undefined' ? `${window.location.origin}/api` : 'http://localhost:3000/api')
@@ -54,11 +63,11 @@ interface Category {
 
 interface Transaction {
   id: string
-  merchant: string
+  merchant?: string
   category: string
-  amount: number
+  amount_cents: number
   date: string
-  status: 'completed' | 'blocked' | 'attempted-over-limit'
+  status: 'completed' | 'blocked' | 'pending' | 'attempted-over-limit'
   studentName: string
 }
 
@@ -75,6 +84,7 @@ interface EFTDeposit {
 }
 
 function ForSponsors() {
+  const SHOW_WEEKLY_SUMMARY = false;
   const SPONSOR_DYNAMIC_ALLOCATIONS = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SPONSOR_DYNAMIC_ALLOCATIONS === 'true');
   const { showSuccess, showError, showInfo } = useToast()
   const { isAuthenticated, user, register, login, logout, clearError, token } = useAuth()
@@ -95,7 +105,10 @@ function ForSponsors() {
 
   const [students] = useState<Student[]>([])
 
-  const [transactions] = useState<Transaction[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false)
+  const [activityCategory, setActivityCategory] = useState<string>('')
+  const [activityDate, setActivityDate] = useState<string>('')
 
   const [joinForm, setJoinForm] = useState({
     firstName: '',
@@ -348,8 +361,9 @@ function ForSponsors() {
         throw new Error(data?.error || 'Allocation failed')
       }
 
-      const updated: BudgetItem[] = data.updated || data.budgets || []
-      setBudgets(updated)
+      // Fetch fresh budgets and ledger to ensure UI reflects latest state
+      await loadBudgets()
+      await loadLedger()
 
       const student = linkedStudents.find(s => s.id === fundForm.selectedStudent)
       setKoosMessage(`Nice one, boet! You've just allocated budgets for ${student?.firstName} ${student?.lastName}.`)
@@ -438,6 +452,58 @@ function ForSponsors() {
     }
   }
 
+  const loadTransactions = async (filters?: { category?: string; date?: string }) => {
+    if (!isAuthenticated || user?.role !== 'sponsor') return;
+    if (!fundForm.selectedStudent) return;
+    try {
+      setIsLoadingTransactions(true)
+      const params = new URLSearchParams({ limit: String(20) });
+      const cat = filters?.category ? normalizeCategoryLabel(filters.category) : undefined
+      if (cat) params.set('category', cat)
+      if (filters?.date) {
+        const start = new Date(`${filters.date}T00:00:00`)
+        const end = new Date(`${filters.date}T23:59:59.999`)
+        params.set('date_from', String(start.getTime()))
+        params.set('date_to', String(end.getTime()))
+      }
+      const resp = await fetch(`${API_BASE}/students/${fundForm.selectedStudent}/transactions?${params.toString()}`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data?.error || 'Failed to load transactions');
+      const arr = (data?.data?.transactions || data?.transactions || []) as any[];
+      let mapped: Transaction[] = arr.map((t: any) => ({
+        id: String(t.id || t.txId || `${Math.random()}`),
+        merchant: t.merchantId || undefined,
+        category: normalizeCategoryLabel(String(t.category || '')) || String(t.category || ''),
+        amount_cents: Number(t.amount_cents || t.amount || 0),
+        date: String(t.created_at || t.date || new Date().toISOString()),
+        status: ((): Transaction['status'] => {
+          const s = String(t.status || '').toUpperCase();
+          if (s === 'APPROVED' || s === 'PARTIAL_APPROVED') return 'completed';
+          if (s === 'DECLINED') return 'blocked';
+          return 'pending';
+        })(),
+        studentName: ''
+      }));
+      // Client-side date filter to be safe
+      if (filters?.date) {
+        const startMs = new Date(`${filters.date}T00:00:00`).getTime()
+        const endMs = new Date(`${filters.date}T23:59:59.999`).getTime()
+        mapped = mapped.filter(t => {
+          const ts = Date.parse(t.date)
+          return !isNaN(ts) && ts >= startMs && ts <= endMs
+        })
+      }
+      setTransactions(mapped);
+    } catch (err) {
+      console.error('Load transactions error:', err);
+    } finally {
+      setIsLoadingTransactions(false)
+    }
+  }
+
   const loadLinkedStudents = async () => {
     if (!isAuthenticated || user?.role !== 'sponsor') return
     try {
@@ -510,8 +576,9 @@ function ForSponsors() {
     if (isAuthenticated && user?.role === 'sponsor' && fundForm.selectedStudent) {
       loadBudgets()
       loadLedger()
+      if (activeTab === 'activity') loadTransactions()
     }
-  }, [isAuthenticated, user?.role, fundForm.selectedStudent])
+  }, [isAuthenticated, user?.role, fundForm.selectedStudent, activeTab])
 
   // Refresh credits summary when switching to dashboard or fund tabs
   useEffect(() => {
@@ -1156,7 +1223,7 @@ function ForSponsors() {
             <div className="space-y-2">
               {ledger.map((l) => (
                 <div key={l.SK} className="flex items-center justify-between bg-white border border-kalahari-sand-dark rounded-lg px-4 py-3">
-                  <div className="text-sm text-charcoal capitalize">{new Date(l.created_at).toLocaleString()} • {l.category} • R{l.amount}</div>
+                  <div className="text-sm text-charcoal capitalize">{new Date(l.created_at).toLocaleString()} • {l.category} • {SPONSOR_DYNAMIC_ALLOCATIONS ? formatZAR(l.amount) : `R${l.amount}`}</div>
                   <div className="text-xs text-charcoal-light">{l.type}</div>
                 </div>
               ))}
@@ -1173,65 +1240,81 @@ function ForSponsors() {
         <h2 className="text-3xl font-bold text-charcoal mb-6">Student Activity</h2>
         
         {/* Filters */}
-        <div className="flex flex-wrap gap-4 mb-6">
-          <select className="px-4 py-2 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown">
-            <option>All Students</option>
+        <div className="flex flex-wrap gap-4 mb-6 items-center">
+          <select value={fundForm.selectedStudent} onChange={(e) => setFundForm(prev => ({...prev, selectedStudent: e.target.value}))} className="px-4 py-2 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown">
+            <option value="">All Students</option>
             {linkedStudents.map((s) => (
-              <option key={s.id}>{(s.firstName || '') + ' ' + (s.lastName || '')}{s.email ? ` (${s.email})` : ''}</option>
+              <option key={s.id} value={s.id}>{(s.firstName || '') + ' ' + (s.lastName || '')}{s.email ? ` (${s.email})` : ''}</option>
             ))}
           </select>
-          <select className="px-4 py-2 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown">
-            <option>All Categories</option>
-            <option>Food</option>
-            <option>Transport</option>
-            <option>Textbooks</option>
+          <select value={activityCategory} onChange={(e) => setActivityCategory(e.target.value)} className="px-4 py-2 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown min-w-[14rem]">
+            <option value="">All Categories</option>
+            {Object.values(MerchantCategoryList).map((cat) => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
           </select>
           <input
             type="date"
+            value={activityDate}
+            onChange={(e) => setActivityDate(e.target.value)}
             className="px-4 py-2 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown"
           />
+          <button
+            type="button"
+            onClick={() => loadTransactions({ category: activityCategory || undefined, date: activityDate || undefined })}
+            disabled={!fundForm.selectedStudent || isLoadingTransactions}
+            className="px-4 py-2 bg-kudu-brown hover:bg-kudu-brown-dark text-white rounded-lg disabled:opacity-60"
+          >
+            {isLoadingTransactions ? 'Searching...' : 'Search'}
+          </button>
         </div>
 
         {/* Transactions */}
         <div className="space-y-4">
-          {transactions.map((transaction) => (
-            <div key={transaction.id} className="bg-kalahari-sand-light rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold text-charcoal">{transaction.merchant}</h4>
-                  <p className="text-sm text-charcoal-light">
-                    {transaction.studentName} • {transaction.category} • {transaction.date}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-charcoal">-R{transaction.amount}</p>
-                  <span className={`text-sm px-2 py-1 rounded-full ${
-                    transaction.status === 'completed' ? 'bg-acacia-green-light text-acacia-green-dark' :
-                    transaction.status === 'blocked' ? 'bg-sunset-orange-light text-sunset-orange-dark' :
-                    'bg-savanna-gold-light text-savanna-gold-dark'
-                  }`}>
-                    {transaction.status}
-                  </span>
+          {transactions.length === 0 ? (
+            <div className="text-charcoal-light">No recent transactions.</div>
+          ) : (
+            transactions.map((transaction) => (
+              <div key={transaction.id} className="bg-kalahari-sand-light rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-semibold text-charcoal">{transaction.merchant || 'Spend'}</h4>
+                    <p className="text-sm text-charcoal-light">
+                      {transaction.category} • {new Date(transaction.date).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold text-charcoal">{formatZAR(transaction.amount_cents)}</p>
+                    <span className={`text-sm px-2 py-1 rounded-full ${
+                      transaction.status === 'completed' ? 'bg-acacia-green-light text-acacia-green-dark' :
+                      transaction.status === 'blocked' ? 'bg-sunset-orange-light text-sunset-orange-dark' :
+                      'bg-savanna-gold-light text-savanna-gold-dark'
+                    }`}>
+                      {transaction.status}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
 
-        {/* Weekly Summary */}
-        <div className="mt-8 bg-savanna-gold-light border-l-4 border-kudu-brown rounded-r-lg p-6">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 bg-kudu-brown rounded-full flex items-center justify-center">
-              <span className="text-white font-bold text-lg">🦌</span>
-            </div>
-            <div>
-              <h3 className="text-xl font-semibold text-charcoal mb-2">Weekly Summary</h3>
-              <p className="text-charcoal-light">
-                Thabo's food budget might need a top-up. He's been spending wisely on transport though!
-              </p>
+        {/* Weekly Summary (hidden for now) */}
+        {SHOW_WEEKLY_SUMMARY && (
+          <div className="mt-8 bg-savanna-gold-light border-l-4 border-kudu-brown rounded-r-lg p-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-kudu-brown rounded-full flex items-center justify-center">
+                <span className="text-white font-bold text-lg">🦌</span>
+              </div>
+              <div>
+                <h3 className="text-xl font-semibold text-charcoal mb-2">Weekly Summary</h3>
+                <p className="text-charcoal-light">
+                  This section is temporarily disabled.
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   )

@@ -1,9 +1,9 @@
 import {useState, useEffect} from 'react'
-import { useToast } from '../contexts/ToastContext'
-import { useAuth } from '../contexts/AuthContext'
-import { useStudentProfile } from '../hooks/useStudentProfile'
-import { useNavigate } from 'react-router-dom'
-import { MerchantCategoryList } from '../constants/merchantCategories'
+import {useToast} from '../contexts/ToastContext'
+import {useAuth} from '../contexts/AuthContext'
+import {useStudentProfile} from '../hooks/useStudentProfile'
+import {useNavigate} from 'react-router-dom'
+import {MerchantCategoryList} from '../constants/merchantCategories'
 
 interface Transaction {
     id: string
@@ -17,11 +17,62 @@ interface Transaction {
 function ForStudents() {
     const [activeTab, setActiveTab] = useState<'join' | 'login' | 'profile' | 'history' | 'scan' | 'tips' | 'support' | 'loginWait'>('join')
     const [darkMode, setDarkMode] = useState(false)
-    const { showSuccess, showError, showInfo } = useToast()
-    const { isAuthenticated, user, register, logout, error, clearError, studentLogin } = useAuth()
-    const { profile: studentProfile, isLoading: profileLoading, ensureProfileLoaded, refreshProfile } = useStudentProfile()
+    const {showSuccess, showError, showInfo} = useToast()
+    const {isAuthenticated, user, register, logout, error, clearError, studentLogin} = useAuth()
+    const {
+        profile: studentProfile,
+        isLoading: profileLoading,
+        ensureProfileLoaded,
+        refreshProfile
+    } = useStudentProfile()
     const navigate = useNavigate()
     const [manualMerchantCode, setManualMerchantCode] = useState('')
+
+        // Inline edit state for mini profile editor
+        const [editingProfile, setEditingProfile] = useState(false)
+        const [firstName, setFirstName] = useState('')
+        const [lastName, setLastName] = useState('')
+        const [studentNumber, setStudentNumber] = useState('')
+        const [savingProfile, setSavingProfile] = useState(false)
+        const [profileError, setProfileError] = useState<string | null>(null)
+
+        // Prefill fields when profile loads or when entering edit mode
+        useEffect(() => {
+            if (studentProfile) {
+                setFirstName((studentProfile as any).firstName || studentProfile.fullName?.split(' ')[0] || '')
+                setLastName((studentProfile as any).lastName || studentProfile.fullName?.split(' ').slice(1).join(' ') || '')
+                setStudentNumber(studentProfile.studentNumber || '')
+            }
+        }, [studentProfile, editingProfile])
+
+        const saveProfile = async () => {
+            try {
+                setProfileError(null)
+                setSavingProfile(true)
+                const apiBaseUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) ? (import.meta as any).env.VITE_API_URL : (typeof window !== 'undefined' ? `${window.location.origin}/api` : 'http://localhost:3000/api')
+                const token = localStorage.getItem('authToken') || sessionStorage.getItem('authToken')
+                const resp = await fetch(`${apiBaseUrl}/students/me`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': token ? `Bearer ${token}` : '',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ firstName, lastName, studentNumber })
+                })
+                const data = await resp.json().catch(() => ({}))
+                if (!resp.ok) {
+                    throw new Error(data?.error || data?.message || `Failed to save (${resp.status})`)
+                }
+                await refreshProfile()
+                setEditingProfile(false)
+                showSuccess('Profile updated')
+            } catch (e: any) {
+                setProfileError(e?.message || 'Failed to update profile')
+                showError(e?.message || 'Failed to update profile')
+            } finally {
+                setSavingProfile(false)
+            }
+        }
 
     // Ensure profile is loaded when user is authenticated as student
     useEffect(() => {
@@ -51,13 +102,45 @@ function ForStudents() {
             if (typeof document !== 'undefined' && (document as any).hidden) return;
             if (inFlight) return;
             inFlight = true;
-            refreshProfile().catch(() => void 0).finally(() => { inFlight = false; });
+            refreshProfile().catch(() => void 0).finally(() => {
+                inFlight = false;
+            });
         };
 
         const interval = setInterval(tick, 60000); // 60s
         // No immediate refresh to prevent bursts
         return () => clearInterval(interval);
     }, [isAuthenticated, user, activeTab, refreshProfile])
+
+    // While on Scan tab, refresh more frequently (every 20s)
+    useEffect(() => {
+        if (!(isAuthenticated && user?.role === 'student')) return;
+        if (activeTab !== 'scan') return;
+        let inFlight = false;
+        const tick = () => {
+            if (typeof document !== 'undefined' && (document as any).hidden) return;
+            if (inFlight) return;
+            inFlight = true;
+            refreshProfile().catch(() => void 0).finally(() => { inFlight = false; });
+        };
+        const interval = setInterval(tick, 20000); // 20s
+        return () => clearInterval(interval);
+    }, [isAuthenticated, user, activeTab, refreshProfile])
+
+    // Refresh when app regains focus or becomes visible
+    useEffect(() => {
+        if (!(isAuthenticated && user?.role === 'student')) return;
+        const onFocus = () => {
+            if (typeof document !== 'undefined' && (document as any).hidden) return;
+            refreshProfile().catch(() => void 0);
+        };
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onFocus);
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onFocus);
+        };
+    }, [isAuthenticated, user, refreshProfile])
 
     const [transactions, setTransactions] = useState<Transaction[]>([])
     const [isLoadingTransactions, setIsLoadingTransactions] = useState<boolean>(false)
@@ -74,6 +157,7 @@ function ForStudents() {
                 const token = localStorage.getItem('authToken') || sessionStorage.getItem('authToken')
                 const resp = await fetch(`${apiBaseUrl}/students/${user.id}/transactions`, {
                     method: 'GET',
+                    cache: 'no-store',
                     headers: {
                         'Authorization': token ? `Bearer ${token}` : '',
                         'Content-Type': 'application/json'
@@ -90,17 +174,17 @@ function ForStudents() {
                     else status = 'completed';
 
                     // Normalize fields coming from backend (amount_cents, created_at, merchantId, etc.)
-                    const id = String(t.id ?? t.transactionId ?? t.tx_id ?? t.txId ?? `${Date.now()}_${Math.random().toString(36).slice(2,8)}`);
+                    const id = String(t.id ?? t.transactionId ?? t.tx_id ?? t.txId ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
                     const merchant = String(t.merchant?.name ?? t.merchantName ?? t.recipient ?? t.merchantId ?? 'Unknown');
                     const category = String(t.category ?? t.notes ?? 'other');
                     const amount = (t.amount_cents !== undefined && t.amount_cents !== null)
                         ? Math.round(Number(t.amount_cents)) / 100
                         : Number(t.amount ?? t.amountZar ?? 0);
                     const date = String(
-                        t.timestamp ?? t.createdAt ?? t.created_at ?? t.date ?? new Date().toISOString().slice(0,10)
+                        t.timestamp ?? t.createdAt ?? t.created_at ?? t.date ?? new Date().toISOString().slice(0, 10)
                     );
 
-                    return { id, merchant, category, amount, date, status } as Transaction;
+                    return {id, merchant, category, amount, date, status} as Transaction;
                 })
                 setTransactions(mapped)
             } catch (err: any) {
@@ -143,7 +227,7 @@ function ForStudents() {
 
             showSuccess("Welcome to KuduPay!", "Lekker! Welcome to the KuduPay family. Let's get you sorted!")
             setActiveTab('profile')
-            
+
             // Clear the form
             setJoinForm({
                 firstName: '',
@@ -166,10 +250,10 @@ function ForStudents() {
 
         try {
             await studentLogin(loginForm.email, loginForm.rememberMe)
-            
+
             showSuccess("Welcome Back!", "Welcome back, boet! Ready to manage your money like a pro?")
             setActiveTab('loginWait')
-            
+
             // Clear the form
             setLoginForm({
                 email: '',
@@ -357,7 +441,8 @@ function ForStudents() {
     const renderLoginWaitSection = () => (
         <div className="max-w-2xl mx-auto">
             <div className="bg-white rounded-xl shadow-sm border border-kalahari-sand-dark p-8">
-                <h2 className="text-3xl font-bold text-kudu-brown mb-6 text-center">Welcome Back, please check your inbox</h2>
+                <h2 className="text-3xl font-bold text-kudu-brown mb-6 text-center">Welcome Back, please check your
+                    inbox</h2>
             </div>
         </div>
     )
@@ -368,7 +453,8 @@ function ForStudents() {
                 <div className="max-w-4xl mx-auto space-y-8">
                     <div className="bg-white rounded-xl shadow-sm border border-kalahari-sand-dark p-8">
                         <div className="text-center">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-kudu-brown mx-auto mb-4"></div>
+                            <div
+                                className="animate-spin rounded-full h-12 w-12 border-b-2 border-kudu-brown mx-auto mb-4"></div>
                             <p className="text-charcoal-light">Loading your profile...</p>
                         </div>
                     </div>
@@ -380,19 +466,113 @@ function ForStudents() {
             <div className="max-w-4xl mx-auto space-y-8">
                 {/* Profile Header */}
                 <div className="bg-white rounded-xl shadow-sm border border-kalahari-sand-dark p-8">
-                    <div className="flex items-center gap-6">
-                        <div className="w-20 h-20 bg-kudu-brown rounded-full flex items-center justify-center">
-                            <span className="text-white font-bold text-3xl">🦌</span>
-                        </div>
-                        <div>
-                            <h2 className="text-3xl font-bold text-charcoal">{studentProfile.fullName}</h2>
-                            <p className="text-charcoal-light">{studentProfile.studentNumber}</p>
-                            <div
-                                className="mt-2 inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-savanna-gold-light text-kudu-brown">
-                                🏆 {studentProfile.badge}
+                    <div className="flex items-center justify-between gap-6">
+                        <div className="flex items-center gap-6">
+                            <div className="w-20 h-20 bg-kudu-brown rounded-full flex items-center justify-center">
+                                <span className="text-white font-bold text-3xl">🦌</span>
+                            </div>
+                            <div>
+                                <h2 className="text-3xl font-bold text-charcoal">{studentProfile.fullName}</h2>
+                                <p className="text-charcoal-light">{studentProfile.studentNumber}</p>
+                                <div
+                                    className="mt-2 inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-savanna-gold-light text-kudu-brown">
+                                    🏆 {studentProfile.badge}
+                                </div>
                             </div>
                         </div>
+                        <div className="ml-auto text-right">
+                            <p className="text-sm text-charcoal-light">Available Balance</p>
+                            <p className="text-3xl font-bold text-charcoal">
+                                {`R${Number(Array.isArray(studentProfile?.categories) ? studentProfile.categories.reduce((sum: number, c: any) => sum + Number(c?.remaining || 0), 0) : 0).toFixed(2)}`}
+                            </p>
+                        </div>
                     </div>
+                </div>
+
+                {/* Personal details (editable) */}
+                <div className="bg-white rounded-xl shadow-sm border border-kalahari-sand-dark p-8">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-2xl font-semibold text-charcoal">Personal details</h3>
+                        {!editingProfile ? (
+                            <button
+                                className="px-3 py-1.5 text-sm rounded bg-kudu-brown text-white hover:bg-kudu-brown-dark"
+                                onClick={() => setEditingProfile(true)}
+                            >
+                                Edit
+                            </button>
+                        ) : (
+                            <div className="space-x-2">
+                                <button
+                                    className="px-3 py-1.5 text-sm rounded bg-kalahari-sand-light hover:bg-kalahari-sand-dark"
+                                    onClick={() => { setEditingProfile(false); setProfileError(null); }}
+                                    disabled={savingProfile}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="px-3 py-1.5 text-sm rounded bg-acacia-green-dark text-white hover:bg-acacia-green"
+                                    onClick={saveProfile}
+                                    disabled={savingProfile}
+                                >
+                                    {savingProfile ? 'Saving…' : 'Save'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Email: read-only */}
+                    <div className="mb-4">
+                        <label className="block text-xs font-medium text-charcoal-light">Email</label>
+                        <div className="mt-1 text-charcoal">{studentProfile.email}</div>
+                    </div>
+
+                    {!editingProfile ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-medium text-charcoal-light">First name</label>
+                                <div className="mt-1 text-charcoal">{(studentProfile as any).firstName || studentProfile.fullName?.split(' ')[0] || '-'}</div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-charcoal-light">Last name</label>
+                                <div className="mt-1 text-charcoal">{(studentProfile as any).lastName || studentProfile.fullName?.split(' ').slice(1).join(' ') || '-'}</div>
+                            </div>
+                            <div className="sm:col-span-2">
+                                <label className="block text-xs font-medium text-charcoal-light">Student number</label>
+                                <div className="mt-1 text-charcoal">{studentProfile.studentNumber || '-'}</div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-medium text-charcoal-light">First name</label>
+                                <input
+                                    className="mt-1 w-full rounded-lg border border-kalahari-sand-dark px-3 py-2 focus:outline-none focus:ring-2 focus:ring-kudu-brown"
+                                    value={firstName}
+                                    onChange={(e) => setFirstName(e.target.value)}
+                                    maxLength={50}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-charcoal-light">Last name</label>
+                                <input
+                                    className="mt-1 w-full rounded-lg border border-kalahari-sand-dark px-3 py-2 focus:outline-none focus:ring-2 focus:ring-kudu-brown"
+                                    value={lastName}
+                                    onChange={(e) => setLastName(e.target.value)}
+                                    maxLength={50}
+                                />
+                            </div>
+                            <div className="sm:col-span-2">
+                                <label className="block text-xs font-medium text-charcoal-light">Student number</label>
+                                <input
+                                    className="mt-1 w-full rounded-lg border border-kalahari-sand-dark px-3 py-2 focus:outline-none focus:ring-2 focus:ring-kudu-brown"
+                                    value={studentNumber}
+                                    onChange={(e) => setStudentNumber(e.target.value)}
+                                    maxLength={20}
+                                />
+                            </div>
+                            {profileError && (<div className="sm:col-span-2 text-sm text-desert-red">{profileError}</div>)}
+                        </div>
+                    )}
                 </div>
 
                 {/* Sponsors */}
@@ -523,23 +703,32 @@ function ForStudents() {
                     Or enter merchant code manually
                 </p>
                 <form
-                    onSubmit={(e) => { e.preventDefault(); handleManualSubmit(); }}
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        handleManualSubmit();
+                    }}
                     className="w-full mt-2 flex gap-2 items-center"
                 >
-                    <input
-                        type="text"
-                        value={manualMerchantCode}
-                        onChange={(e) => setManualMerchantCode(e.target.value)}
-                        placeholder="Enter merchant code or paste full payment link"
-                        className="flex-1 px-4 py-2 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown"
-                    />
-                    <button
-                        type="submit"
-                        className="bg-kudu-brown hover:bg-kudu-brown-dark text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                        aria-label="Proceed with merchant code"
-                    >
-                        Proceed
-                    </button>
+                    <div className="flex-col">
+                        <div className={"my-2"}>
+                            <input
+                                type="text"
+                                value={manualMerchantCode}
+                                onChange={(e) => setManualMerchantCode(e.target.value)}
+                                placeholder="Enter merchant code or paste full payment link"
+                                className="flex-1 px-4 py-2 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown"
+                            />
+                        </div>
+                        <div className={"my-2"}>
+                        <button
+                            type="submit"
+                            className="bg-kudu-brown hover:bg-kudu-brown-dark text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                            aria-label="Proceed with merchant code"
+                        >
+                            Proceed
+                        </button>
+                        </div>
+                    </div>
                 </form>
             </div>
         </div>

@@ -1,4 +1,5 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import Navigation from './components/Navigation'
 import BackToTop from './components/BackToTop'
 import HomePage from './components/HomePage'
@@ -10,10 +11,34 @@ import AboutKoos from './components/AboutKoos'
 import Join from './components/Join'
 import ProtectedRoute from './components/ProtectedRoute'
 import { ToastProvider } from './contexts/ToastContext'
-import { AuthProvider } from './contexts/AuthContext'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import AdminLogin from './components/AdminLogin'
 import AdminPanel from './components/AdminPanel'
 import PayPage from './components/PayPage'
+import StudentAppShell from './components/student/AppShell'
+import StudentHome from './components/student/screens/Home'
+import StudentBudgets from './components/student/screens/Budgets'
+import StudentActivity from './components/student/screens/Activity'
+import StudentMe from './components/student/screens/Me'
+
+function NavMaybe() {
+  const location = useLocation()
+  if (location.pathname.startsWith('/app')) return null
+  return <Navigation />
+}
+
+function AutoStudentRedirect() {
+  const { user } = useAuth()
+  const loc = useLocation()
+  const navigate = useNavigate()
+  useEffect(() => {
+    const inPwa = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches
+    if (inPwa && user?.role === 'student' && (loc.pathname === '/' || loc.pathname === '/for-students')) {
+      navigate('/app', { replace: true })
+    }
+  }, [user?.role, loc.pathname, navigate])
+  return null
+}
 
 function App() {
   return (
@@ -22,7 +47,8 @@ function App() {
         <Router>
           <div className="min-h-screen bg-kalahari-sand-light">
             {/* Navigation */}
-            <Navigation />
+            <NavMaybe />
+            <AutoStudentRedirect />
 
             {/* Main Content */}
             <Routes>
@@ -55,6 +81,22 @@ function App() {
                   <PayPage />
                 </ProtectedRoute>
               } />
+
+              {/* Student PWA app shell and tabs */}
+              <Route
+                path="/app"
+                element={
+                  <ProtectedRoute allowedRoles={['student']}>
+                    <StudentAppShell />
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<StudentHome />} />
+                <Route path="pay" element={<PayPage />} />
+                <Route path="budgets" element={<StudentBudgets />} />
+                <Route path="activity" element={<StudentActivity />} />
+                <Route path="me" element={<StudentMe />} />
+              </Route>
             </Routes>
 
             {/* Back to Top */}

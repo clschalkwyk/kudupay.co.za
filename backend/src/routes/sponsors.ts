@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getCurrentUser, extractTokenFromHeader, findUserByEmailAndRole, findUserById, Roles } from '../services/auth';
 import { encodeCursor, decodeCursor } from '../utils/cursor';
-import { addDeposit, updateSponsorshipLimits, getSponsorTotals, allocateBudgets, SpendCategories, addSponsorStudentLink, hasSponsorStudentLinkAsync, listLinkedStudentsBySponsor, topupSponsorCredits, reverseAllocations, generateEFTReference, createEFTDepositNotification, listEFTDepositNotificationsAsync, listBudgetsForSponsor, listAllocationLedgerBySponsorAsync, getSponsorAggregateAsync, sumSponsorApprovedDepositsAsync } from '../services/sponsorship.store';
+import { addDeposit, updateSponsorshipLimits, getSponsorTotals, allocateBudgets, SpendCategories, addSponsorStudentLink, hasSponsorStudentLinkAsync, listLinkedStudentsBySponsor, topupSponsorCredits, reverseAllocations, generateEFTReference, createEFTDepositNotification, listEFTDepositNotificationsAsync, listBudgetsForSponsor, listAllocationLedgerBySponsorAsync, getSponsorAggregateAsync, sumSponsorApprovedDepositsAsync, listSponsorStudentAggregates } from '../services/sponsorship.store';
 
 const router = Router();
 
@@ -395,25 +395,33 @@ router.get('/:sponsorId/credits/summary', async (req: Request, res: Response) =>
     const agg = await getSponsorAggregateAsync(sponsorId);
     let approved_total_cents = Math.round(Number(agg?.approved_total_cents || 0));
     let allocated_total_cents = Math.round(Number(agg?.allocated_total_cents || 0));
-    let balance_cents = Math.max(0, Math.round(Number(agg?.available_total_cents || (approved_total_cents - allocated_total_cents))));
 
     // Fallback: derive approved from ledger if aggregate missing/zero
     try {
-      if (!agg || (approved_total_cents === 0 && balance_cents === 0)) {
+      if (!agg || approved_total_cents === 0) {
         const approvedFromLedger = await sumSponsorApprovedDepositsAsync(sponsorId);
         if (approved_total_cents === 0 && approvedFromLedger > 0) {
           approved_total_cents = approvedFromLedger;
-          if (!agg) {
-            allocated_total_cents = 0;
-            balance_cents = Math.max(0, approved_total_cents - allocated_total_cents);
-          } else {
-            balance_cents = Math.max(0, Math.round(Number(agg.available_total_cents || (approved_total_cents - allocated_total_cents))));
-          }
         }
       }
-    } catch (err) {
-      // keep original values on fallback error
-    }
+    } catch {}
+
+    // Fallback: if allocated is 0 (or aggregate missing), try sum of per-student sponsor aggregates
+    try {
+      if (!agg || allocated_total_cents === 0) {
+        const studentIds = await listLinkedStudentsBySponsor(sponsorId);
+        let sumAllocated = 0;
+        for (const sid of studentIds) {
+          const items = await listSponsorStudentAggregates(sid);
+          const mine = items.find(it => String(it.sponsorId) === String(sponsorId));
+          if (mine) sumAllocated += Math.round(Number(mine.allocated_total_cents || 0));
+        }
+        if (sumAllocated > 0) allocated_total_cents = sumAllocated;
+      }
+    } catch {}
+
+    // Balance is conservative: approved - allocated
+    const balance_cents = Math.max(0, Math.round(approved_total_cents - allocated_total_cents));
 
     return res.status(200).json({ balance_cents, approved_total_cents, allocated_total_cents });
   } catch (error) {

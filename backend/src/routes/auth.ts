@@ -1,5 +1,6 @@
 import {Router, Request, Response} from 'express';
 import {registerUser, loginUser, logoutUser, getCurrentUser, verifyMagicLinkToken} from "../services/auth";
+import {DynamoDBInterface} from "../services/dynamo.db";
 
 const router = Router();
 
@@ -82,6 +83,26 @@ router.post('/register', async (req: Request, res: Response) => {
                     }
                 }
             });
+        }
+
+        if (role === 'sponsor'){
+            // Seed aggregate row (first-write safety)
+            const {DynamoDBInterface} = require('../services/dynamo.db');
+            const DB_TABLE_NAME = process.env.DB_TABLE_NAME || 'users';
+            const DB_TABLE_REGION = process.env.DB_TABLE_REGION || 'af-south-1';
+
+            const db = new DynamoDBInterface(DB_TABLE_NAME, DB_TABLE_REGION);
+            try {
+                await db.putItem({
+                    Pk: `SPONSOR#${result.user.id}`,
+                    Sk: 'AGGREGATE',
+                    sponsorId: result.user.id,
+                    approved_total_cents: 0,
+                    allocated_total_cents: 0,
+                    available_total_cents: 0,
+                    created_at: new Date().toISOString(),
+                } as any, { ConditionExpression: 'attribute_not_exists(Pk) AND attribute_not_exists(Sk)' });
+            } catch {}
         }
 
         // Return standard response for students and sponsors

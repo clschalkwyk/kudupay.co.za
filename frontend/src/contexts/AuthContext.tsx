@@ -566,6 +566,7 @@ export function AuthProvider({children}: AuthProviderProps) {
             // Fetch from API if not cached
             const response = await fetch(`${baseApiUrl}/students/profile`, {
                 method: 'GET',
+                cache: 'no-store',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',

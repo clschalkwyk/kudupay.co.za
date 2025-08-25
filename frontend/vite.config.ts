@@ -41,6 +41,8 @@ export default defineConfig({
         ]
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         runtimeCaching: [
           {
@@ -64,6 +66,11 @@ export default defineConfig({
                 maxAgeSeconds: 60 * 60 * 24 * 365 // <== 365 days
               }
             }
+          },
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
+            handler: 'NetworkOnly',
+            method: 'GET',
           }
         ]
       }

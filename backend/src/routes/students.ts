@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getCurrentUser, extractTokenFromHeader, findUserById } from '../services/auth';
 import { getStudentAggregateAsync, prepareTransaction, confirmTransaction, SpendCategories, listSponsorStudentAggregates, listStudentSponsorCategoryBudgets } from '../services/sponsorship.store';
+import { DynamoDBInterface } from '../services/dynamo.db';
 
 const router = Router();
 
@@ -152,6 +153,9 @@ router.get('/:id/transactions', createRateLimiter(120, 60_000), async (req: Requ
     // Keep response size predictable
     filtered = filtered.slice(0, lim);
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return res.status(200).json({
       message: 'Student transactions retrieved successfully',
       data: {
@@ -359,6 +363,9 @@ router.get('/profile', async (req: Request, res: Response) => {
     }));
 
     // Return student profile data matching frontend expectations
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return res.status(200).json({
       message: 'Student profile retrieved successfully',
       data: {
@@ -497,6 +504,9 @@ router.get('/:id/budgets', async (req: Request, res: Response) => {
       };
     });
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return res.status(200).json({
       message: 'Student budgets retrieved successfully',
       data: {
@@ -507,6 +517,102 @@ router.get('/:id/budgets', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Student budgets error:', error);
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Student self profile endpoints ---
+router.get('/me', async (req: Request, res: Response) => {
+  try {
+    const token = extractTokenFromHeader(req);
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+    const me = await getCurrentUser(token);
+    if ('error' in me) return res.status(401).json({ error: (me as any).error });
+    if (me.user.role !== 'student') return res.status(403).json({ error: 'Only students can access this endpoint' });
+
+    // Basic profile view (email + names + studentNumber)
+    return res.status(200).json({
+      message: 'Student profile',
+      data: {
+        userId: me.user.id,
+        email: me.user.email,
+        firstName: me.user.firstName,
+        lastName: me.user.lastName,
+        studentNumber: me.user.studentNumber || ''
+      }
+    });
+  } catch (err) {
+    console.error('GET /students/me error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.patch('/me', async (req: Request, res: Response) => {
+  try {
+    const token = extractTokenFromHeader(req);
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+    const me = await getCurrentUser(token);
+    if ('error' in me) return res.status(401).json({ error: (me as any).error });
+    if (me.user.role !== 'student') return res.status(403).json({ error: 'Only students can update this profile' });
+
+    const { firstName, lastName, studentNumber } = req.body || {};
+    const updates: Record<string, any> = {};
+    const str = (v: any) => (v === undefined || v === null ? undefined : String(v));
+    if (str(firstName)) updates.firstName = String(firstName).trim();
+    if (str(lastName)) updates.lastName = String(lastName).trim();
+    if (str(studentNumber)) updates.studentNumber = String(studentNumber).trim();
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    // Simple length validation (minimal, avoids adding new deps)
+    if (updates.firstName && (updates.firstName.length < 1 || updates.firstName.length > 50)) {
+      return res.status(400).json({ error: 'firstName must be 1-50 characters' });
+    }
+    if (updates.lastName && (updates.lastName.length < 1 || updates.lastName.length > 50)) {
+      return res.status(400).json({ error: 'lastName must be 1-50 characters' });
+    }
+    if (updates.studentNumber && (updates.studentNumber.length < 3 || updates.studentNumber.length > 20)) {
+      return res.status(400).json({ error: 'studentNumber must be 3-20 characters' });
+    }
+
+    const DB_TABLE_NAME = process.env.DB_TABLE_NAME || 'users';
+    const DB_TABLE_REGION = process.env.DB_TABLE_REGION || 'af-south-1';
+    const db = new DynamoDBInterface(DB_TABLE_NAME, DB_TABLE_REGION);
+
+    // Our user record lives at PK: ROLE#id, SK: USER
+    const Pk = `${me.user.role.toUpperCase()}#${me.user.id}`;
+    const Sk = 'USER';
+
+    const keys = Object.keys(updates);
+    const setExpr = keys.map((k, i) => `#k${i} = :v${i}`).join(', ');
+    const ExpressionAttributeNames = Object.fromEntries(keys.map((k, i) => [`#k${i}`, k]));
+    const ExpressionAttributeValues = Object.fromEntries(keys.map((k, i) => [`:v${i}`, (updates as any)[k]]));
+
+    const updated = await db.updateItem({
+      Pk,
+      Sk,
+      UpdateExpression: `SET ${setExpr}`,
+      ExpressionAttributeNames,
+      ExpressionAttributeValues,
+      ReturnValues: 'ALL_NEW'
+    });
+
+    if (!updated) return res.status(404).json({ error: 'Profile not found' });
+
+    return res.status(200).json({
+      message: 'Profile updated',
+      data: {
+        userId: updated.id || me.user.id,
+        email: updated.email || me.user.email,
+        firstName: updated.firstName,
+        lastName: updated.lastName,
+        studentNumber: updated.studentNumber || ''
+      }
+    });
+  } catch (err) {
+    console.error('PATCH /students/me error:', err);
+    return res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 

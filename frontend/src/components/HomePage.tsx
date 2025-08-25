@@ -1,18 +1,4 @@
-import { useState } from 'react'
-
 function HomePage() {
-  const [email, setEmail] = useState('')
-  const [isSubmitted, setIsSubmitted] = useState(false)
-
-  const handleEmailSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (email) {
-      setIsSubmitted(true)
-      // Here you would typically send the email to your backend
-      console.log('Email submitted:', email)
-    }
-  }
-
   return (
     <div className="min-h-screen bg-kalahari-sand-light">
       {/* Hero Section */}
@@ -61,52 +47,6 @@ function HomePage() {
             stay on budget while giving sponsors peace of mind. 
             <span className="text-kudu-brown font-medium"> Lekker, hey?</span>
           </p>
-
-          {/* Coming Soon Message */}
-          <div className="bg-white border border-kalahari-sand-dark rounded-xl p-8 mb-12 max-w-2xl mx-auto shadow-sm">
-            <h2 className="text-3xl font-semibold text-kudu-brown mb-4">
-              We're Almost Ready!
-            </h2>
-            <p className="text-lg text-charcoal mb-6">
-              Ag sorry, we're still putting the finishing touches on KuduPay. 
-              But don't worry - we're working around the clock to get this sorted for you.
-            </p>
-            
-            {/* Email Signup */}
-            {!isSubmitted ? (
-              <form onSubmit={handleEmailSubmit} className="space-y-4">
-                <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-charcoal mb-2">
-                    Get notified when we launch
-                  </label>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <input
-                      type="email"
-                      id="email"
-                      aria-autocomplete={"list"}
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="your.email@example.com"
-                      className="flex-1 px-4 py-3 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown focus:border-kudu-brown transition-colors"
-                      required
-                    />
-                    <button
-                      type="submit"
-                      className="bg-kudu-brown hover:bg-kudu-brown-dark text-white font-medium px-6 py-3 rounded-lg transition-colors"
-                    >
-                      Notify Me
-                    </button>
-                  </div>
-                </div>
-              </form>
-            ) : (
-              <div className="bg-acacia-green-light border-l-4 border-acacia-green rounded-r-lg p-4">
-                <p className="text-acacia-green-dark font-medium">
-                  ✅ Sorted! We'll ping you as soon as KuduPay is ready to roll.
-                </p>
-              </div>
-            )}
-          </div>
 
           {/* Features Preview */}
           <div className="grid md:grid-cols-3 gap-8 mb-12">
