@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap');
+
+/* Base Tailwind directives for v4 */
+@import "tailwindcss";
+
+/* Custom color theme definitions */
+@theme {
+  /* Custom colors */
+  --color-kudu-orange: #E67E22;
+  --color-kudu-orange-light: #F39C12;
+  --color-kudu-orange-dark: #D35400;
+
+  --color-kudu-brown: #8B4513;
+  --color-kudu-brown-light: #CD853F;
+  --color-kudu-brown-dark: #654321;
+
+  --color-charcoal: #1A1A1A;
+  --color-charcoal-light: #2C3E50;
+  --color-charcoal-dark: #0F0F0F;
+
+  --color-kalahari-sand: #F4E4BC;
+  --color-kalahari-sand-light: #FAF0E6;
+  --color-kalahari-sand-dark: #8B7355;
+
+  --color-savanna-green: #27AE60;
+  --color-savanna-green-light: #2ECC71;
+  --color-savanna-green-dark: #1E8449;
+
+  --color-desert-red: #E74C3C;
+  --color-desert-red-light: #EC7063;
+  --color-desert-red-dark: #C0392B;
+
+  --color-kudu-gray: #6B7280;
+  --color-kudu-gray-light: #9CA3AF;
+  --color-kudu-gray-dark: #374151;
+
+  /* Added: Colors used by action buttons and UI elements */
+  --color-acacia-green: #228B22;
+  --color-acacia-green-light: #32CD32;
+  --color-acacia-green-dark: #006400;
+
+  --color-sunset-orange: #FF8C00;
+  --color-sunset-orange-light: #FFA500;
+  --color-sunset-orange-dark: #FF7F00;
+
+  /* Also define savanna-gold used in several components */
+  --color-savanna-gold: #DAA520;
+  --color-savanna-gold-light: #F4D03F;
+  --color-savanna-gold-dark: #B8860B;
+}
+
+body {
+  font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+  line-height: 1.6;
+}
+
+/* Smooth scrolling for navigation links */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Toast animations */
+@keyframes slide-in-right {
+  0% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
