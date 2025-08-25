@@ -489,12 +489,13 @@ export async function updateSponsorAggregate(sponsorId: string, deltas: {
     const da = Math.round(Number(deltas.delta_approved_cents || 0));
     const dl = Math.round(Number(deltas.delta_allocated_cents || 0));
     const now = new Date().toISOString();
+    const av = da - dl;
     try {
         await dynamo.updateItem({
             Pk: `SPONSOR#${sponsorId}`,
             Sk: 'AGGREGATE',
-            UpdateExpression: 'SET approved_total_cents = if_not_exists(approved_total_cents, :z) + :da, allocated_total_cents = if_not_exists(allocated_total_cents, :z) + :dl, available_total_cents = if_not_exists(available_total_cents, :z) + :da - :dl, updated_at = :u, sponsorId = :sid',
-            ExpressionAttributeValues: {':z': 0, ':da': da, ':dl': dl, ':u': now, ':sid': sponsorId},
+            UpdateExpression: 'SET approved_total_cents = if_not_exists(approved_total_cents, :z) + :da, allocated_total_cents = if_not_exists(allocated_total_cents, :z) + :dl, available_total_cents = if_not_exists(available_total_cents, :z) + :av, updated_at = :u, sponsorId = :sid',
+            ExpressionAttributeValues: {':z': 0, ':da': da, ':dl': dl, ':av': av, ':u': now, ':sid': sponsorId},
         });
     } catch (err) {
         console.error('updateSponsorAggregate failed', {sponsorId, deltas, err});
