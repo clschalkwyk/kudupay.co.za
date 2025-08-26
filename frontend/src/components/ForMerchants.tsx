@@ -368,6 +368,18 @@ function ForMerchants() {
         }
     }
 
+    const handleUpdateBankDetails = () => {
+        setActiveTab('profile')
+        // Smoothly take the user to the Bank Account section on the profile page
+        setTimeout(() => {
+            try {
+                const el = document.getElementById('bank-section')
+                el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            } catch {}
+        }, 0)
+        showInfo('Edit Bank Details', 'Update your bank info below, then click "Save Changes"')
+    }
+
     type JoinForm = {
         businessName: string;
         email: string;
@@ -935,7 +947,7 @@ function ForMerchants() {
                                 <p className="text-charcoal">{bankAccount.accountHolder}</p>
                             </div>
                         </div>
-                        <button className="mt-4 text-kudu-brown hover:text-kudu-brown-dark font-medium">
+                        <button onClick={handleUpdateBankDetails} className="mt-4 text-kudu-brown hover:text-kudu-brown-dark font-medium">
                             Update Bank Details
                         </button>
                     </div>
@@ -1034,7 +1046,7 @@ function ForMerchants() {
                         <label htmlFor="isOnline" className="ml-2 block text-sm text-charcoal">Currently Online</label>
                     </div>
 
-                    <div>
+                    <div id="bank-section">
                         <h4 className="text-lg font-semibold text-charcoal mb-2">Bank Account</h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
