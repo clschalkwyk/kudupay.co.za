@@ -11,7 +11,7 @@ KuduPay helps South African students spend within sponsor-defined budgets at app
 Links:
 - Web: https://www.kudupay.co.za
 - API: https://api.kudupay.co.za/api (example)
-
+- Youtube: https://youtu.be/MbVulpSMLrk
 ---
 
 ### Repo Structure
