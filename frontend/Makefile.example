@@ -1,0 +1,114 @@
+# ===== KuduPay Frontend Makefile =====
+# DevOps-friendly targets to build and upload the frontend to S3
+#
+# Usage examples:
+#   make build
+#   AWS_REGION=eu-west-1 make deploy
+#   AWS_REGION=eu-west-1 make s3-sync S3_BUCKET=my-static-bucket
+#   make s3-sync S3_BUCKET=my-static-bucket
+#   make deploy S3_BUCKET=my-static-bucket S3_PREFIX=web
+#   make deploy S3_BUCKET=my-static-bucket AWS_PROFILE=prod
+#   make deploy S3_BUCKET=my-static-bucket DRY_RUN=true
+#   make cloudfront-invalidate CF_DISTRIBUTION_ID=E123ABC456DEF
+#
+# Notes:
+# - Requires Node.js, npm, and AWS CLI to be installed and configured.
+# - This Makefile lives in the frontend/ directory; paths are relative to it.
+# - Vite build output defaults to "dist/". Adjust BUILD_DIR if customized.
+
+# ===== Configuration =====
+APP_NAME := kudupay-frontend
+BUILD_DIR ?= dist
+AWS_REGION ?=
+S3_BUCKET ?= kudupay.co.za
+S3_PREFIX ?=
+AWS_PROFILE ?=
+CF_DISTRIBUTION_ID ?=
+DRY_RUN ?= false
+
+# Computed values
+S3_URI := s3://$(S3_BUCKET)$(if $(S3_PREFIX),/$(S3_PREFIX),)
+AWS_PROFILE_ARG := $(if $(AWS_PROFILE),--profile $(AWS_PROFILE),)
+DRYRUN_ARG := $(if $(filter true,$(DRY_RUN)),--dryrun,)
+
+# ===== Phony targets =====
+.PHONY: help install build clean preview s3-sync s3-upload deploy cloudfront-invalidate check-aws check-bucket
+
+help:
+	@echo "KuduPay Frontend Makefile"
+	@echo "Targets:"
+	@echo "  install                 Install dependencies (npm ci if possible)"
+	@echo "  build                   Build the frontend bundle (Vite)"
+	@echo "  clean                   Remove build output directory ($(BUILD_DIR))"
+	@echo "  preview                 Run local preview server"
+	@echo "  s3-sync                 Upload/sync $(BUILD_DIR) to S3 (requires S3_BUCKET)"
+	@echo "  deploy                  build + s3-sync"
+	@echo "  cloudfront-invalidate   Create a CloudFront invalidation (requires CF_DISTRIBUTION_ID)"
+	@echo "Variables:"
+	@echo "  S3_BUCKET (required for s3-sync/deploy)"
+	@echo "  S3_PREFIX (optional key prefix under the bucket)"
+	@echo "  AWS_PROFILE (optional; passed to AWS CLI)"
+	@echo "  DRY_RUN=true (optional; adds --dryrun to aws s3 sync)"
+	@echo "Examples:"
+	@echo "  make deploy S3_BUCKET=my-bucket S3_PREFIX=web"
+	@echo "  make s3-sync S3_BUCKET=my-bucket AWS_PROFILE=prod"
+	@echo "  make deploy S3_BUCKET=my-bucket DRY_RUN=true"
+
+# ===== Utility checks =====
+check-aws:
+	@aws --version >/dev/null 2>&1 || (echo "AWS CLI not found. Please install and configure AWS CLI." && exit 1)
+
+check-bucket:
+	@if [ -z "$(S3_BUCKET)" ]; then \
+		echo "Error: S3_BUCKET is required. Example: make s3-sync S3_BUCKET=my-bucket"; \
+		exit 1; \
+	fi
+
+# ===== Node utility targets =====
+install:
+	npm ci || npm install
+
+build:
+	npm run build
+
+clean:
+	- rimraf "$(BUILD_DIR)" 2> NUL || rm -rf "$(BUILD_DIR)" 2>/dev/null || true
+
+preview:
+	npm run preview
+
+# ===== S3 upload targets =====
+# We perform two sync passes:
+#  1) All non-HTML assets with long-term caching (immutable hashed filenames)
+#  2) HTML files with no-store to ensure clients fetch latest shell
+s3-sync: check-aws check-bucket
+	@if [ ! -d "$(BUILD_DIR)" ]; then \
+		echo "Build directory '$(BUILD_DIR)' not found. Run 'make build' first."; \
+		exit 1; \
+	fi
+	@echo "Syncing non-HTML assets to $(S3_URI) ..."
+	aws s3 sync "$(BUILD_DIR)/" "$(S3_URI)/" $(AWS_PROFILE_ARG) $(DRYRUN_ARG) --delete \
+	  --exclude "*.html" \
+	  --cache-control "public,max-age=31536000,immutable"
+	@echo "Syncing HTML files to $(S3_URI) with no-store cache ..."
+	aws s3 sync "$(BUILD_DIR)/" "$(S3_URI)/" $(AWS_PROFILE_ARG) $(DRYRUN_ARG) --delete \
+	  --exclude "*" --include "*.html" \
+	  --cache-control "no-store" \
+	  --content-type "text/html"
+	@echo "S3 sync complete: $(S3_URI)"
+
+# Alias for familiarity
+s3-upload: s3-sync
+
+# Build then upload
+deploy: build s3-sync
+	@echo "Deploy complete: $(S3_URI)"
+
+# Optional: invalidate CloudFront cache after deploy
+cloudfront-invalidate: check-aws
+	@if [ -z "$(CF_DISTRIBUTION_ID)" ]; then \
+		echo "Error: CF_DISTRIBUTION_ID not set"; \
+		exit 1; \
+	fi
+	aws cloudfront create-invalidation --distribution-id $(CF_DISTRIBUTION_ID) --paths "/*" $(AWS_PROFILE_ARG)
+	@echo "CloudFront invalidation requested for distribution $(CF_DISTRIBUTION_ID)"

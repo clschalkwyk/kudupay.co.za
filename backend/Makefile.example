@@ -1,0 +1,307 @@
+# ===== Configuration =====
+#
+APP_NAME := kudupay-backend
+AWS_REGION ?= af-south-1
+AWS_ACCOUNT_ID ?= your_aws_account_id
+ECR_REPO ?= $(APP_NAME)
+IMAGE_TAG ?= $(shell date +%Y%m%d%H%M%S)
+ECR_URI := $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_REPO)
+IMAGE := $(ECR_URI):$(IMAGE_TAG)
+# LAMBDA_FUNCTION_NAME := kudupay-backend-api
+# Lambda creation parameters
+LAMBDA_ROLE_ARN ?= arn:aws:iam::$(AWS_ACCOUNT_ID):role/kudupay-backend-lambda-exec
+MEMORY_SIZE ?= 1024
+TIMEOUT ?= 30
+ARCHITECTURE ?= x86_64
+DESCRIPTION ?= KuduPay Backend API
+# IAM Role settings
+ROLE_NAME ?= kudupay-backend-lambda-exec
+
+# For local Docker test of Lambda container
+PORT ?= 9000
+
+# ===== Node utility targets =====
+.PHONY: install build clean dev lint test
+
+install:
+	npm ci
+
+build:
+	npm run build
+
+clean:
+	npm run clean || true
+
+# Optional if you add ESLint/Prettier
+lint:
+	echo "No lint configured"
+
+# Placeholder for tests
+test:
+	npm test || true
+
+# Local dev (Express server on port 3000) — requires Option A with server.ts
+dev:
+	npm run dev
+
+# ===== Docker / Lambda image targets =====
+.PHONY: docker-build docker-run docker-logs ecr-login ecr-create docker-push lambda-create deploy iam-create-role iam-attach-basic iam-show-role
+
+# Build the Lambda container image from backend/
+docker-build:
+	DOCKER_BUILDKIT=0 docker build -t $(APP_NAME):local .
+
+# Run the Lambda container locally on port 9000
+# Invoke with: curl -s http://localhost:9000/2015-03-31/functions/function/invocations -d '{"path":"/health","httpMethod":"GET"}' | jq
+# The path is passed to serverless-http which routes to Express
+docker-run:
+	docker run --rm -p $(PORT):8080 --name $(APP_NAME) $(APP_NAME):local
+
+# View container logs (if running detached)
+docker-logs:
+	docker logs -f $(APP_NAME)
+
+# Authenticate Docker to ECR (needs AWS CLI)
+ecr-login:
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+
+# Create ECR repo if it doesn't exist
+ecr-create:
+	-aws ecr describe-repositories --repository-names $(ECR_REPO) --region $(AWS_REGION) >/dev/null 2>&1 || \
+	  aws ecr create-repository --repository-name $(ECR_REPO) --region $(AWS_REGION) >/dev/null
+
+# Build, tag, and push to ECR
+docker-push: ecr-create ecr-login
+	DOCKER_BUILDKIT=0 docker build -t $(APP_NAME):$(IMAGE_TAG) .
+	docker tag $(APP_NAME):$(IMAGE_TAG) $(IMAGE)
+	docker push $(IMAGE)
+	@echo "Pushed: $(IMAGE)"
+
+# Create the Lambda function (first-time setup)
+# Required vars: LAMBDA_FUNCTION_NAME, LAMBDA_ROLE_ARN, IMAGE (or IMAGE_TAG to build ECR URI)
+# Example:
+#   make lambda-create LAMBDA_FUNCTION_NAME=kudupay-backend-api LAMBDA_ROLE_ARN=arn:aws:iam::123456789012:role/your-lambda-execution-role
+lambda-create:
+	@if [ -z "$(LAMBDA_FUNCTION_NAME)" ]; then echo "LAMBDA_FUNCTION_NAME not set"; exit 1; fi
+	@if [ -z "$(IMAGE)" ]; then echo "IMAGE not set"; exit 1; fi
+	@if [ -z "$(LAMBDA_ROLE_ARN)" ]; then echo "LAMBDA_ROLE_ARN not set"; exit 1; fi
+	aws lambda create-function \
+	  --function-name $(LAMBDA_FUNCTION_NAME) \
+	  --package-type Image \
+	  --code ImageUri=$(IMAGE) \
+	  --role $(LAMBDA_ROLE_ARN) \
+	  --architectures $(ARCHITECTURE) \
+	  --description "$(DESCRIPTION)" \
+	  --memory-size $(MEMORY_SIZE) \
+	  --timeout $(TIMEOUT) \
+	  --region $(AWS_REGION) \
+	  >/dev/null
+	@echo "Created function $(LAMBDA_FUNCTION_NAME) with image $(IMAGE)"
+
+# ===== IAM role helpers (optional) =====
+# Create the IAM role with trust policy for Lambda
+# Usage: make iam-create-role ROLE_NAME=my-exec-role
+iam-create-role:
+	aws iam create-role \
+	  --role-name $(ROLE_NAME) \
+	  --assume-role-policy-document file://iam/lambda-trust-policy.json \
+	  --description "Execution role for $(APP_NAME) Lambda" \
+	  --region $(AWS_REGION) >/dev/null
+	@echo "Created role $(ROLE_NAME)"
+
+# Attach minimal inline policy for CloudWatch Logs
+# Usage: make iam-attach-basic ROLE_NAME=my-exec-role
+iam-attach-basic:
+	aws iam put-role-policy \
+	  --role-name $(ROLE_NAME) \
+	  --policy-name lambda-basic-logs \
+	  --policy-document file://iam/lambda-basic-policy.json \
+	  --region $(AWS_REGION) >/dev/null
+	@echo "Attached inline basic logs policy to $(ROLE_NAME)"
+
+# Show the role ARN (use for LAMBDA_ROLE_ARN)
+iam-show-role:
+	aws iam get-role --role-name $(ROLE_NAME) --query 'Role.Arn' --output text --region $(AWS_REGION)
+
+# Update Lambda function to use the new image
+# Requires: LAMBDA_FUNCTION_NAME environment variable
+# Example: make build LAMBDA_FUNCTION_NAME=kudupay-backend-api IMAGE_TAG=20250813204815
+# Example: make deploy LAMBDA_FUNCTION_NAME=kudupay-backend-api IMAGE_TAG=20250813204815
+
+# Example: make apigw-setup LAMBDA_FUNCTION_NAME=kudupay-backend-api IMAGE_TAG=20250813181132
+# Or pass IMAGE fully: make deploy LAMBDA_FUNCTION_NAME=my-backend-lambda IMAGE=$(ECR_URI):mytag
+ifndef LAMBDA_FUNCTION_NAME
+$(warning LAMBDA_FUNCTION_NAME not set; pass LAMBDA_FUNCTION_NAME=my-func)
+endif
+
+deploy:
+	@if [ -z "$(LAMBDA_FUNCTION_NAME)" ]; then echo "LAMBDA_FUNCTION_NAME not set"; exit 1; fi
+	@if [ -z "$(IMAGE)" ]; then echo "IMAGE not set"; exit 1; fi
+	@echo "Deploying to $(LAMBDA_FUNCTION_NAME) in $(AWS_REGION) using image $(IMAGE)"
+	@if aws lambda get-function --function-name $(LAMBDA_FUNCTION_NAME) --region $(AWS_REGION) >/dev/null 2>&1; then \
+	  echo "Function exists. Updating code..."; \
+	  aws lambda update-function-code --function-name $(LAMBDA_FUNCTION_NAME) --image-uri $(IMAGE) --region $(AWS_REGION) >/dev/null; \
+	  echo "Updated $(LAMBDA_FUNCTION_NAME) to image $(IMAGE)"; \
+	else \
+	  echo "Function not found. Creating function $(LAMBDA_FUNCTION_NAME)..."; \
+	  if [ -z "$(LAMBDA_ROLE_ARN)" ]; then echo "LAMBDA_ROLE_ARN not set; cannot create function. Set it or run 'make lambda-create'."; exit 1; fi; \
+	  aws lambda create-function --function-name $(LAMBDA_FUNCTION_NAME) --package-type Image --code ImageUri=$(IMAGE) --role $(LAMBDA_ROLE_ARN) --architectures $(ARCHITECTURE) --description "$(DESCRIPTION)" --memory-size $(MEMORY_SIZE) --timeout $(TIMEOUT) --region $(AWS_REGION) >/dev/null; \
+	  echo "Created function $(LAMBDA_FUNCTION_NAME) with image $(IMAGE)"; \
+	fi
+
+# ===== API Gateway (HTTP API) targets =====
+# API Gateway config
+API_NAME ?= $(APP_NAME)-http
+STAGE ?= prod
+PAYLOAD_VERSION ?= 2.0
+
+.PHONY: apigw-setup apigw-create-http apigw-integrate-lambda apigw-routes apigw-permission apigw-stage apigw-url
+
+# End-to-end setup
+apigw-setup: apigw-create-http apigw-integrate-lambda apigw-routes apigw-permission apigw-stage apigw-url
+
+# Create or reuse an HTTP API and store ApiId locally
+apigw-create-http:
+	@if [ -z "$(API_NAME)" ]; then echo "API_NAME not set"; exit 1; fi
+	@API_ID=$$(aws apigatewayv2 get-apis --query "Items[?Name=='$(API_NAME)'].ApiId | [0]" --output text --region $(AWS_REGION)); \
+	if [ "$$API_ID" = "None" ] || [ -z "$$API_ID" ]; then \
+	  API_ID=$$(aws apigatewayv2 create-api --name "$(API_NAME)" --protocol-type HTTP --region $(AWS_REGION) --query 'ApiId' --output text); \
+	  echo $$API_ID > .apigw_api_id; \
+	  echo "Created HTTP API $(API_NAME) with id $$API_ID"; \
+	else \
+	  echo $$API_ID > .apigw_api_id; \
+	  echo "Using existing API $(API_NAME) id=$$API_ID"; \
+	fi
+
+# Create or reuse Lambda proxy integration and store IntegrationId
+apigw-integrate-lambda:
+	@if [ -z "$(LAMBDA_FUNCTION_NAME)" ]; then echo "LAMBDA_FUNCTION_NAME not set"; exit 1; fi
+	@API_ID=$$(cat .apigw_api_id); \
+	FUNC_ARN=$$(aws lambda get-function --function-name $(LAMBDA_FUNCTION_NAME) --region $(AWS_REGION) --query 'Configuration.FunctionArn' --output text); \
+	INTEGRATION_URI=arn:aws:apigateway:$(AWS_REGION):lambda:path/2015-03-31/functions/$$FUNC_ARN/invocations; \
+	INTEG_ID=$$(aws apigatewayv2 get-integrations --api-id $$API_ID --region $(AWS_REGION) --query "Items[?IntegrationUri=='$$INTEGRATION_URI'].IntegrationId | [0]" --output text 2>/dev/null); \
+	if [ "$$INTEG_ID" = "None" ] || [ -z "$$INTEG_ID" ]; then \
+	  INTEG_ID=$$(aws apigatewayv2 create-integration --api-id $$API_ID --integration-type AWS_PROXY --integration-uri "$$INTEGRATION_URI" --payload-format-version $(PAYLOAD_VERSION) --region $(AWS_REGION) --query 'IntegrationId' --output text); \
+	  echo $$INTEG_ID > .apigw_integration_id; \
+	  echo "Created integration $$INTEG_ID"; \
+	else \
+	  echo $$INTEG_ID > .apigw_integration_id; \
+	  echo "Using existing integration $$INTEG_ID"; \
+	fi
+
+# Create routes for ANY / and ANY /{proxy+}
+apigw-routes:
+	@API_ID=$$(cat .apigw_api_id); INTEG_ID=$$(cat .apigw_integration_id); \
+	for RK in "ANY /" "ANY /{proxy+}"; do \
+	  EXIST=$$(aws apigatewayv2 get-routes --api-id $$API_ID --region $(AWS_REGION) --query "Items[?RouteKey=='$$RK'].RouteId | [0]" --output text); \
+	  if [ "$$EXIST" = "None" ] || [ -z "$$EXIST" ]; then \
+	    aws apigatewayv2 create-route --api-id $$API_ID --route-key "$$RK" --target integrations/$$INTEG_ID --region $(AWS_REGION) >/dev/null; \
+	    echo "Created route $$RK"; \
+	  else \
+	    echo "Using existing route $$RK"; \
+	  fi; \
+	done
+
+# Allow API Gateway to invoke the Lambda function
+apigw-permission:
+	@if [ -z "$(LAMBDA_FUNCTION_NAME)" ]; then echo "LAMBDA_FUNCTION_NAME not set"; exit 1; fi
+	@API_ID=$$(cat .apigw_api_id); \
+	STMT=apigw-invoke-$(APP_NAME)-$$(date +%s); \
+	SOURCE_ARN=arn:aws:execute-api:$(AWS_REGION):$(AWS_ACCOUNT_ID):$$API_ID/*/*/*; \
+	aws lambda add-permission --function-name $(LAMBDA_FUNCTION_NAME) --statement-id $$STMT --action lambda:InvokeFunction --principal apigateway.amazonaws.com --source-arn $$SOURCE_ARN --region $(AWS_REGION) >/dev/null || true; \
+	echo "Ensured API Gateway can invoke the Lambda."
+
+# Create or reuse the deployment stage
+apigw-stage:
+	@API_ID=$$(cat .apigw_api_id); \
+	EXIST=$$(aws apigatewayv2 get-stages --api-id $$API_ID --region $(AWS_REGION) --query "Items[?StageName=='$(STAGE)'].StageName | [0]" --output text); \
+	if [ "$$EXIST" = "None" ] || [ -z "$$EXIST" ]; then \
+	  aws apigatewayv2 create-stage --api-id $$API_ID --stage-name $(STAGE) --auto-deploy --region $(AWS_REGION) >/dev/null; \
+	  echo "Created stage $(STAGE)"; \
+	else \
+	  echo "Stage $(STAGE) already exists (auto-deploy on)."; \
+	fi
+
+# Print the invoke URL
+apigw-url:
+	@API_ID=$$(cat .apigw_api_id); \
+	echo "Invoke URL: https://$$API_ID.execute-api.$(AWS_REGION).amazonaws.com/$(STAGE)"; \
+	echo "Example: curl -s https://$$API_ID.execute-api.$(AWS_REGION).amazonaws.com/$(STAGE)/health"
+
+# ===== Utilities: Generate Lambda env command from .env =====
+# Usage examples:
+#   make lambda-env LAMBDA_FUNCTION_NAME=kudupay-backend-api
+#   make lambda-env LAMBDA_FUNCTION_NAME=kudupay-backend-api ENV=../.env OUT=.lambda-env.json
+# Variables:
+#   ENV: path to .env (default .env)
+#   OUT: path to output JSON (default .lambda-env.json)
+#   LAMBDA_FUNCTION_NAME: the Lambda function name (required or can be omitted to print placeholder)
+ENV ?= .env
+OUT ?= .lambda-env.json
+.PHONY: lambda-env
+lambda-env:
+	node scripts/generate-lambda-env-cmd.js --env $(ENV) --out $(OUT) --function-name $(LAMBDA_FUNCTION_NAME)
+
+# ===== Utilities: Apply Lambda env JSON to function =====
+# Usage examples:
+#   make lambda-env-apply LAMBDA_FUNCTION_NAME=kudupay-backend-api AWS_REGION=af-south-1
+#   make lambda-env-apply LAMBDA_FUNCTION_NAME=kudupay-backend-api OUT=.lambda-env.json
+#   make lambda-env-set LAMBDA_FUNCTION_NAME=kudupay-backend-api           # generate + apply
+# Notes:
+#   - OUT defaults to .lambda-env.json (same as lambda-env target)
+#   - Requires AWS CLI configured with permissions
+.PHONY: lambda-env-apply lambda-env-set
+lambda-env-apply:
+	@if [ -z "$(LAMBDA_FUNCTION_NAME)" ]; then echo "LAMBDA_FUNCTION_NAME not set"; exit 1; fi
+	@if [ ! -f "$(OUT)" ]; then echo "Env JSON '$(OUT)' not found. Generate it with 'make lambda-env' or provide OUT=path/to/file.json"; exit 1; fi
+	@echo "Applying env from $(OUT) to $(LAMBDA_FUNCTION_NAME) in $(AWS_REGION)..."
+	aws lambda update-function-configuration --function-name $(LAMBDA_FUNCTION_NAME) --environment "file://$(OUT)" --region $(AWS_REGION)
+	@echo "Done."
+
+# Convenience: generate JSON from .env then apply it
+lambda-env-set: lambda-env lambda-env-apply
+
+# ===== Convenience workflows =====
+.PHONY: release ship help print-vars
+
+# Build, push to ECR and deploy to Lambda in one go
+# Usage:
+#   make release LAMBDA_FUNCTION_NAME=kudupay-backend-api [IMAGE_TAG=YYYYMMDDHHMMSS]
+# Notes:
+#   - If IMAGE_TAG is omitted, a timestamp is generated.
+#   - Requires AWS CLI logged in (this Makefile logs in automatically via ecr-login).
+release: ## Build, push to ECR and deploy to Lambda
+	@if [ -z "$(LAMBDA_FUNCTION_NAME)" ]; then echo "LAMBDA_FUNCTION_NAME not set"; exit 1; fi
+	@echo "Releasing $(APP_NAME) -> $(LAMBDA_FUNCTION_NAME) with tag $(IMAGE_TAG) in $(AWS_REGION)"
+	$(MAKE) docker-push IMAGE_TAG=$(IMAGE_TAG)
+	$(MAKE) deploy LAMBDA_FUNCTION_NAME=$(LAMBDA_FUNCTION_NAME) IMAGE_TAG=$(IMAGE_TAG)
+	@echo "Release complete. Function: $(LAMBDA_FUNCTION_NAME) Image: $(IMAGE)"
+
+# Alias for release
+ship: release ## Alias for 'release'
+
+# Print current important variables
+print-vars:
+	@echo "APP_NAME=$(APP_NAME)"
+	@echo "AWS_REGION=$(AWS_REGION)"
+	@echo "AWS_ACCOUNT_ID=$(AWS_ACCOUNT_ID)"
+	@echo "ECR_REPO=$(ECR_REPO)"
+	@echo "ECR_URI=$(ECR_URI)"
+	@echo "IMAGE_TAG=$(IMAGE_TAG)"
+	@echo "IMAGE=$(IMAGE)"
+	@echo "LAMBDA_FUNCTION_NAME=$(LAMBDA_FUNCTION_NAME)"
+
+# Show handy commands and current configuration
+help:
+	@echo "KuduPay Backend Makefile"
+	@echo ""
+	@echo "Common commands:"
+	@echo "  make release LAMBDA_FUNCTION_NAME=name [IMAGE_TAG=...]   Build, push, deploy"
+	@echo "  make ship LAMBDA_FUNCTION_NAME=name [IMAGE_TAG=...]      Alias for release"
+	@echo "  make docker-push                                         Build, tag and push image"
+	@echo "  make deploy LAMBDA_FUNCTION_NAME=name [IMAGE_TAG=...]     Update Lambda image"
+	@echo "  make lambda-env-set LAMBDA_FUNCTION_NAME=name             Sync env vars from .env"
+	@echo "  make apigw-setup LAMBDA_FUNCTION_NAME=name                One-time API Gateway setup"
+	@echo ""
+	@echo "Current config:"
+	@$(MAKE) -s print-vars
