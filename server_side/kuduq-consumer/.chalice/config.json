@@ -1,0 +1,24 @@
+{
+  "version": "2.0",
+  "app_name": "kuduq-consumer",
+  "stages": {
+    "dev": {
+      "api_gateway_stage": "api",
+      "environment_variables": {
+        "LOG_LEVEL": "INFO",
+        "APP_ENV": "dev",
+        "SQS_QUEUE_NAME": "SQS_QUEUE_NAME",
+        "SMTP_SERVER":"SMTP_DOMAIN",
+        "SMTP_PORT": "587",
+        "SMTP_USER":"SMTP_SUERNAME",
+        "SMTP_PASS":"SMTP_PASSWORD",
+        "SMTP_SECURE": "false",
+        "FRONTEND_URL": "your-front-end-url",
+        "RAPYD_MONEY_API_TOKEN": "",
+        "RAPYD_MONEY_BASE_URL":"https://seal-app-qp9cc.ondigitalocean.app/api/v1",
+        "DB_TABLE_NAME":"your-dynamodb-table-name",
+        "DB_TABLE_REGION":"aws-region"
+      }
+    }
+  }
+}
