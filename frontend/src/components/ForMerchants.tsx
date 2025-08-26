@@ -472,11 +472,9 @@ function ForMerchants() {
                 password: '',
                 rememberMe: false
             })
-        } catch (err) {
-            // Error is handled by AuthContext, but we can show additional UI feedback
-            if (error) {
-                showError("Login Failed", `Eish! ${error}`)
-            }
+        } catch (err: any) {
+            const msg = (err && err.message) ? err.message : (error || 'Login failed. Please check your credentials.')
+            showError("Login Failed", `Eish! ${msg}`)
         }
     }
 
@@ -954,27 +952,37 @@ function ForMerchants() {
                 </div>
 
                 {/* Withdrawal Form */}
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-charcoal mb-2">
-                            Withdrawal Amount (Minimum R100)
-                        </label>
-                        <input
-                            type="number"
-                            min="100"
-                            max={withdrawableBalance}
-                            className="w-full px-4 py-3 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown focus:border-kudu-brown transition-colors"
-                            placeholder="Enter amount"
-                        />
-                    </div>
+                {withdrawableBalance >= 100 ? (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-charcoal mb-2">
+                                Withdrawal Amount (Minimum R100)
+                            </label>
+                            <input
+                                type="number"
+                                min="100"
+                                max={withdrawableBalance}
+                                className="w-full px-4 py-3 border border-kalahari-sand-dark rounded-lg focus:ring-2 focus:ring-kudu-brown focus:border-kudu-brown transition-colors"
+                                placeholder="Enter amount"
+                            />
+                        </div>
 
-                    <button
-                        onClick={handleWithdraw}
-                        className="w-full bg-kudu-brown hover:bg-kudu-brown-dark text-white font-medium py-3 px-6 rounded-lg transition-colors"
-                    >
-                        Withdraw to Bank Account
-                    </button>
-                </div>
+                        <button
+                            onClick={handleWithdraw}
+                            className="w-full bg-kudu-brown hover:bg-kudu-brown-dark text-white font-medium py-3 px-6 rounded-lg transition-colors"
+                        >
+                            Withdraw to Bank Account
+                        </button>
+                    </div>
+                ) : (
+                    <div className="space-y-3">
+                        <div className="bg-kalahari-sand-light border border-kalahari-sand-dark text-charcoal rounded-lg p-4">
+                            <p className="font-medium">Insufficient balance to withdraw</p>
+                            <p className="text-sm text-charcoal-light">You need at least R100 available to request a withdrawal. Your current available balance is R{withdrawableBalance.toFixed(2)}.</p>
+                        </div>
+                        <p className="text-sm text-charcoal-light">Tip: Keep selling — once you reach R100 or more, the withdrawal form will appear here.</p>
+                    </div>
+                )}
 
                 <div className="mt-6 text-sm text-charcoal-light">
                     <p>• Withdrawals are processed within 1-2 business days</p>

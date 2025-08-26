@@ -387,17 +387,21 @@ export function AuthProvider({children}: AuthProviderProps) {
                     dispatch({ type: 'CLEAR_SPONSOR_PROFILE' });
                 }
             } else {
+                const message = data.error || 'Login failed. Please check your credentials.';
                 dispatch({
                     type: 'AUTH_FAILURE',
-                    payload: data.error || 'Login failed. Please check your credentials.',
+                    payload: message,
                 });
+                throw new Error(message);
             }
         } catch (error) {
             console.error('Login error:', error);
+            const message = 'Network error. Please check your connection and try again.';
             dispatch({
                 type: 'AUTH_FAILURE',
-                payload: 'Network error. Please check your connection and try again.',
+                payload: message,
             });
+            throw new Error(message);
         }
     };
 
