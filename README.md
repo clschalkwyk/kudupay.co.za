@@ -9,7 +9,7 @@ KuduPay helps South African students spend within sponsor-defined budgets at app
 - Brand: Koos the Kudu — our helpful, wise, and witty guide
 
 Links:
-- Web: https://kudupay.co.za
+- Web: https://www.kudupay.co.za
 - API: https://api.kudupay.co.za/api (example)
 
 ---
